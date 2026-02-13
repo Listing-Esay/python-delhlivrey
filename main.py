@@ -18,7 +18,7 @@ app.add_middleware(
 
 DELHIVERY_TOKEN = os.environ.get("DELHIVERY_API_TOKEN", "")
 PICKUP_PINCODE = "226002"
-DELHIVERY_API_URL = "https://track.delhivery.com/c/api/pin-code/check/"
+DELHIVERY_API_URL = "https://track.delhivery.com/c/api/pin-codes/json/"
 
 
 class PincodeRequest(BaseModel):
@@ -35,7 +35,6 @@ async def check_delivery(req: PincodeRequest):
 
     params = {
         "filter_codes": req.pincode,
-        "od": PICKUP_PINCODE,
     }
     headers = {"Authorization": f"Token {DELHIVERY_TOKEN}"}
 
