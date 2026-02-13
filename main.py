@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
 import httpx
 import os
-import re
 
 app = FastAPI()
 
@@ -15,8 +14,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DELHIVERY_TOKEN = os.environ.get("DELHIVERY_API_TOKEN", "")
+DELHIVERY_TOKEN = os.environ.get("DELHIVERY_API_TOKEN")
 PICKUP_PINCODE = "226002"
+
 PINCODE_API = "https://track.delhivery.com/c/api/pin-codes/json/"
 TRANSIT_API = "https://track.delhivery.com/api/v1/json/route/"
 
@@ -27,58 +27,108 @@ class PincodeRequest(BaseModel):
 
 @app.post("/api/check-delivery")
 async def check_delivery(req: PincodeRequest):
+
     if not DELHIVERY_TOKEN:
-        raise HTTPException(status_code=500, detail="API token not configured")
+        raise HTTPException(status_code=500, detail="Delhivery API token not configured")
 
-    headers = {"Authorization": f"Token {DELHIVERY_TOKEN}"}
+    headers = {
+        "Authorization": f"Token {DELHIVERY_TOKEN}",
+        "Content-Type": "application/json"
+    }
 
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            # 1. Serviceability check
-            svc_resp = await client.get(PINCODE_API, params={"filter_codes": req.pincode}, headers=headers)
-            svc_resp.raise_for_status()
-            svc_data = svc_resp.json()
+    async with httpx.AsyncClient(timeout=20) as client:
 
-            delivery_codes = svc_data.get("delivery_codes", [])
-            if not delivery_codes:
-                return {"serviceable": False}
+        # 1️⃣ Serviceability Check
+        svc_resp = await client.get(
+            PINCODE_API,
+            params={"filter_codes": req.pincode},
+            headers=headers
+        )
 
-            info = delivery_codes[0].get("postal_code", {})
-            if not info.get("pin"):
-                return {"serviceable": False}
+        if svc_resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="Serviceability API failed")
 
-            cod = info.get("cod", "N") == "Y"
-            district = info.get("district", "")
-            state_code = info.get("state_code", "")
+        svc_data = svc_resp.json()
+        delivery_codes = svc_data.get("delivery_codes", [])
 
-            # 2. Transit time — Surface & Air (parallel)
-            surface_body = {"pickup_pincode": PICKUP_PINCODE, "delivery_pincode": req.pincode, "shipment_mode": "Surface"}
-            air_body = {"pickup_pincode": PICKUP_PINCODE, "delivery_pincode": req.pincode, "shipment_mode": "Air"}
+        if not delivery_codes:
+            return {"serviceable": False}
 
-            surface_resp = await client.post(TRANSIT_API, json=surface_body, headers=headers)
-            air_resp = await client.post(TRANSIT_API, json=air_body, headers=headers)
+        info = delivery_codes[0].get("postal_code", {})
 
-    except Exception:
-        raise HTTPException(status_code=502, detail="Unable to reach Delhivery API")
+        cod_available = info.get("cod", "N") == "Y"
+        district = info.get("district", "")
+        state_code = info.get("state_code", "")
+
+        # 2️⃣ Transit API – Surface
+        surface_body = {
+            "pickup_pincode": PICKUP_PINCODE,
+            "delivery_pincode": req.pincode,
+            "service_type": "SURFACE"
+        }
+
+        surface_resp = await client.post(
+            TRANSIT_API,
+            json=surface_body,
+            headers=headers
+        )
+
+        if surface_resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail="Transit API not enabled or failed (Surface)"
+            )
+
+        surface_data = surface_resp.json()
+
+        surface_days = surface_data.get("data", {}).get("estimated_days")
+        if surface_days is None:
+            raise HTTPException(
+                status_code=502,
+                detail="Surface ETA not returned by Delhivery"
+            )
+
+        # 3️⃣ Transit API – Air
+        air_body = {
+            "pickup_pincode": PICKUP_PINCODE,
+            "delivery_pincode": req.pincode,
+            "service_type": "EXPRESS"
+        }
+
+        air_resp = await client.post(
+            TRANSIT_API,
+            json=air_body,
+            headers=headers
+        )
+
+        if air_resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail="Transit API not enabled or failed (Air)"
+            )
+
+        air_data = air_resp.json()
+
+        air_days = air_data.get("data", {}).get("estimated_days")
+        if air_days is None:
+            raise HTTPException(
+                status_code=502,
+                detail="Air ETA not returned by Delhivery"
+            )
 
     now = datetime.now()
 
-    surface_days = int(surface_resp.json().get("estimated_days", 5))
-    air_days = int(air_resp.json().get("estimated_days", 2))
-
     return {
         "serviceable": True,
-        "cod_available": cod,
+        "cod_available": cod_available,
         "district": district,
         "state_code": state_code,
         "surface": {
-            "days": surface_days,
-            "eta": (now + timedelta(days=surface_days)).strftime("%A, %d %B %Y"),
-            "extra_charge": 0,
+            "days": int(surface_days),
+            "eta": (now + timedelta(days=int(surface_days))).strftime("%A, %d %B %Y"),
         },
         "air": {
-            "days": air_days,
-            "eta": (now + timedelta(days=air_days)).strftime("%A, %d %B %Y"),
-            "extra_charge": 30,
-        },
+            "days": int(air_days),
+            "eta": (now + timedelta(days=int(air_days))).strftime("%A, %d %B %Y"),
+        }
     }
