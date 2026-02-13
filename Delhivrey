@@ -11,7 +11,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict to your Shopify domain in production
+    allow_origins=["https://icwi40-p0.myshopify.com"],  # Restrict to your Shopify domain in production
     allow_methods=["POST"],
     allow_headers=["*"],
 )
