@@ -1,4 +1,5 @@
 import json
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import gspread
@@ -16,9 +17,6 @@ app.add_middleware(
 )
 
 # Configuration
-# Path to your Google Service Account key JSON file
-import os
-
 # Render pe hum secret file upload karenge 'hide.json' naam se
 SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "hide.json")
 
@@ -30,6 +28,10 @@ SCOPES = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive"
 ]
+
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "DelhiLivery API is running"}
 
 @app.get("/api/orders")
 def get_orders():
@@ -43,15 +45,15 @@ def get_orders():
             SERVICE_ACCOUNT_FILE, SCOPES
         )
         client = gspread.authorize(creds)
-        
+
         # 2. Open the Spreadsheet and specific sheet
         sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Sheet1")
-        
+
         # 3. Get all records as dictionary (auto-maps headers to dict keys)
         records = sheet.get_all_records()
-        
+
         return {"success": True, "data": records}
-        
+
     except Exception as e:
         return {"success": False, "error": str(e)}
 
