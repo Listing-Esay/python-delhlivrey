@@ -1,5 +1,6 @@
 fastapi
-gspread==6.1.0
 uvicorn
-oauth2client==4.1.3
+httpx
 pydantic
+gspread
+oauth2client
